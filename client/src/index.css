@@ -1,0 +1,95 @@
+@import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@300;400;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ms-bg: #f3f2f1;
+  --ms-white: #ffffff;
+  --ms-text: #201f1e;
+  --ms-theme: #0078d4;
+  --ms-theme-dark: #005a9e;
+  --ms-gray: #edebe9;
+  --ms-border: #e1dfdd;
+}
+
+body {
+  font-family: 'Segoe UI', sans-serif;
+  background-color: var(--ms-bg);
+  color: var(--ms-text);
+}
+
+/* Microsoft Style Card */
+.ms-card {
+  background: white;
+  border-radius: 4px;
+  box-shadow: 0 1.6px 3.6px 0 rgba(0, 0, 0, 0.132), 0 0.3px 0.9px 0 rgba(0, 0, 0, 0.108);
+  padding: 20px;
+  border: 1px solid transparent;
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.ms-card:hover {
+  box-shadow: 0 6.4px 14.4px 0 rgba(0, 0, 0, 0.132), 0 1.2px 3.6px 0 rgba(0, 0, 0, 0.108);
+}
+
+/* Microsoft Style Button */
+.ms-btn {
+  background: var(--ms-theme);
+  color: white;
+  border: none;
+  padding: 6px 20px;
+  border-radius: 2px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.ms-btn:hover {
+  background: var(--ms-theme-dark);
+}
+
+.ms-btn-secondary {
+  background: white;
+  color: #333;
+  border: 1px solid #8a8886;
+}
+
+.ms-btn-secondary:hover {
+  background: #f3f2f1;
+}
+
+/* Sidebar Link */
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  color: #323130;
+  text-decoration: none;
+  font-size: 14px;
+  border-left: 3px solid transparent;
+  transition: all 0.1s;
+}
+
+.nav-link:hover {
+  background: #f3f2f1;
+}
+
+.nav-link.active {
+  background: #eff6fc;
+  border-left-color: var(--ms-theme);
+  color: #201f1e;
+  font-weight: 600;
+}
+
+/* Table / List */
+.ms-list-header {
+  border-bottom: 1px solid var(--ms-border);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  font-size: 18px;
+  font-weight: 600;
+}
