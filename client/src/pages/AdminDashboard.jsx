@@ -10,30 +10,23 @@ import {
 
 const COLORS = ['#0078d4', '#107c10', '#ffb900', '#d83b01', '#8764b8', '#00bcf2'];
 
-const TASK_TYPES = [
-    'Site Report / መስክ ሪፖርት',
-    'ማራዘሚያ ፈቃድ (ለተጀመረ ግንባታ)',
-    'ማራዘሚያ ፈቃድ (ላልተጀመረ ግንባታ)',
-    'እድሳት ፈቃድ',
-    'Commencement Permit / ማስጀመሪያ ፈቃድ'
-];
-
 const WOREDAS = ['02', '03', '04', '05', '06', '08', '09', '10', '13', '14'];
 
 const AdminDashboard = () => {
     const { user, logout, register } = useAuth();
     const [tasks, setTasks] = useState([]);
     const [users, setUsers] = useState([]);
+    const [taskTypes, setTaskTypes] = useState([]);
     const [newTask, setNewTask] = useState({
-        task_type: TASK_TYPES[0],
+        task_type: '',
         woreda: '',
         description: ''
     });
-    // Views: 'dashboard' (analytics), 'assign-task' (list), 'create', 'create-user'
-    // Default view is now 'dashboard' (formerly analytics)
+    // Views: 'dashboard' (analytics), 'assign-task' (list), 'create', 'create-user', 'task-types'
     const [view, setView] = useState('dashboard');
     const [analyticsData, setAnalyticsData] = useState(null);
     const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'staff' });
+    const [newType, setNewType] = useState('');
     const [editingUser, setEditingUser] = useState(null); // Track user being edited
     const [assignModalOpen, setAssignModalOpen] = useState(false);
     const [selectedTask, setSelectedTask] = useState(null);
@@ -52,6 +45,43 @@ const AdminDashboard = () => {
         status: '',
         sortBy: 'created_at' // or 'completed_at'
     });
+
+    const fetchTaskTypes = async () => {
+        try {
+            const res = await api.get('/api/task_types.php');
+            if (res.data.success) {
+                setTaskTypes(res.data.task_types);
+                if (res.data.task_types.length > 0 && !newTask.task_type) {
+                    setNewTask(prev => ({ ...prev, task_type: res.data.task_types[0].name }));
+                }
+            }
+        } catch (e) { console.error(e); }
+    };
+
+    const handleCreateTaskType = async (e) => {
+        e.preventDefault();
+        try {
+            const res = await api.post('/api/task_types.php?action=create', { name: newType });
+            if (res.data.success) {
+                setNewType('');
+                fetchTaskTypes();
+            } else {
+                alert(res.data.error || 'Failed to create task type');
+            }
+        } catch (e) { alert('Failed to create task type'); }
+    };
+
+    const handleDeleteTaskType = async (id) => {
+        if (!confirm('Are you sure you want to delete this task type?')) return;
+        try {
+            const res = await api.post('/api/task_types.php?action=delete', { id });
+            if (res.data.success) {
+                fetchTaskTypes();
+            } else {
+                alert(res.data.error || 'Failed to delete task type');
+            }
+        } catch (e) { alert('Failed to delete task type'); }
+    };
 
     const fetchTasks = async () => {
         try {
@@ -80,6 +110,7 @@ const AdminDashboard = () => {
     }
 
     useEffect(() => {
+        fetchTaskTypes();
         fetchTasks();
         fetchUsers();
     }, []);
@@ -297,7 +328,10 @@ const AdminDashboard = () => {
                         <GoPlus /> Create Task
                     </button>
                     <button onClick={() => { setView('create-user'); setSidebarOpen(false); }} className={`w-full nav-link ${view === 'create-user' ? 'active' : ''}`}>
-                        <GoPerson /> Create User
+                        <GoPerson /> Manage Users
+                    </button>
+                    <button onClick={() => { setView('task-types'); setSidebarOpen(false); }} className={`w-full nav-link ${view === 'task-types' ? 'active' : ''}`}>
+                        <GoTasklist /> Task Types
                     </button>
                 </nav>
                 <div className="p-4 border-t border-[#e1dfdd]">
@@ -318,6 +352,55 @@ const AdminDashboard = () => {
                 {/* ... existing content ... */}
 
 
+                {view === 'task-types' && (
+                    <div className="max-w-2xl bg-white p-8 rounded shadow-sm">
+                        <h2 className="ms-list-header flex items-center gap-2 mb-6"><GoTasklist /> Manage Task Types</h2>
+                        
+                        <form onSubmit={handleCreateTaskType} className="mb-8 flex gap-2">
+                            <input 
+                                type="text" 
+                                className="flex-1 p-2 border border-[#8a8886] focus:border-[#0078d4] outline-none rounded" 
+                                placeholder="Enter new task type name..." 
+                                value={newType} 
+                                onChange={e => setNewType(e.target.value)} 
+                                required 
+                            />
+                            <button type="submit" className="ms-btn px-4 py-2">Add Type</button>
+                        </form>
+
+                        <div className="overflow-hidden border border-[#e1dfdd] rounded">
+                            <table className="w-full text-left text-sm">
+                                <thead className="bg-[#faf9f8] border-b border-[#e1dfdd]">
+                                    <tr>
+                                        <th className="p-3 font-semibold">Task Type Name</th>
+                                        <th className="p-3 font-semibold text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {taskTypes.map(type => (
+                                        <tr key={type.id} className="border-b border-[#e1dfdd] hover:bg-[#f3f2f1]">
+                                            <td className="p-3">{type.name}</td>
+                                            <td className="p-3 text-right">
+                                                <button 
+                                                    onClick={() => handleDeleteTaskType(type.id)} 
+                                                    className="text-xs px-3 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100"
+                                                >
+                                                    Delete
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {taskTypes.length === 0 && (
+                                        <tr>
+                                            <td colSpan="2" className="p-4 text-center text-gray-500">No task types found. Add one above.</td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
                 {view === 'create' && (
                     <div className="max-w-2xl bg-white p-8 rounded shadow-sm">
                         <h2 className="ms-list-header flex items-center gap-2"><GoPlus /> Create New Task</h2>
@@ -331,8 +414,8 @@ const AdminDashboard = () => {
                                         onChange={e => setNewTask({ ...newTask, task_type: e.target.value })}
                                         required
                                     >
-                                        {TASK_TYPES.map(type => (
-                                            <option key={type} value={type}>{type}</option>
+                                        {taskTypes.map(type => (
+                                            <option key={type.id} value={type.name}>{type.name}</option>
                                         ))}
                                     </select>
                                 </div>
@@ -688,8 +771,8 @@ const AdminDashboard = () => {
                                         onChange={(e) => setFilters({ ...filters, task_type: e.target.value })}
                                     >
                                         <option value="">All Types</option>
-                                        {TASK_TYPES.map(type => (
-                                            <option key={type} value={type}>{type}</option>
+                                        {taskTypes.map(type => (
+                                            <option key={type.id} value={type.name}>{type.name}</option>
                                         ))}
                                     </select>
                                 </div>

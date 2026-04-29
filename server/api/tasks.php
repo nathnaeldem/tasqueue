@@ -67,17 +67,22 @@ if ($method === 'GET') {
         echo json_encode(['success' => true, 'task_id' => $taskId]);
     
     } elseif ($action === 'assign') {
-        $taskId = $data['task_id'];
+        $taskId = $data['task_id'] ?? 0;
         $targetUserId = $data['target_user_id'] ?? null;
-        
+        $taskStmt = $pdo->prepare("SELECT task_type FROM tasks WHERE id = ?");
+        $taskStmt->execute([$taskId]);
+        $taskType = $taskStmt->fetchColumn();
+
+        if (!$taskId || !$taskType) {
+            echo json_encode(['success' => false, 'error' => 'Task not found']);
+            exit;
+        }
+
         $selectedStaff = null;
 
         if ($targetUserId) {
-            // MANUAL ASSIGNMENT (only possible for first task)
             $selectedStaff = $targetUserId;
         } else {
-            // FAIRNESS LOGIC
-            // 1. Get all staff
             $staffUsers = $pdo->query("SELECT id FROM users WHERE role='staff'")->fetchAll(PDO::FETCH_COLUMN);
             
             if (empty($staffUsers)) {
@@ -85,32 +90,27 @@ if ($method === 'GET') {
                  exit;
             }
 
-            // 2. Get counts of tasks assigned to each staff
             $counts = [];
             foreach($staffUsers as $uid) {
-                $stmt = $pdo->prepare("SELECT COUNT(*) FROM tasks WHERE assigned_to = ?");
-                $stmt->execute([$uid]);
+                $stmt = $pdo->prepare("SELECT COUNT(*) FROM tasks WHERE assigned_to = ? AND task_type = ?");
+                $stmt->execute([$uid, $taskType]);
                 $counts[$uid] = $stmt->fetchColumn();
             }
 
-            // 3. Find candidates with minimum task count
             $minCount = min($counts);
             $candidates = array_keys($counts, $minCount);
 
             if (count($candidates) == 1) {
                 $selectedStaff = $candidates[0];
             } else {
-                // 4. Tie-breaker: Who was assigned 'paster' (longest ago)?
                 $candidateTimes = [];
                 foreach($candidates as $uid) {
-                    // Get the time of their LATEST assignment
-                    $stmt = $pdo->prepare("SELECT MAX(assigned_at) FROM tasks WHERE assigned_to = ?");
-                    $stmt->execute([$uid]);
+                    $stmt = $pdo->prepare("SELECT MAX(assigned_at) FROM tasks WHERE assigned_to = ? AND task_type = ?");
+                    $stmt->execute([$uid, $taskType]);
                     $latest = $stmt->fetchColumn();
-                    // If never assigned, time is 0 (will come first in sort)
                     $candidateTimes[$uid] = $latest ? strtotime($latest) : 0;
                 }
-                // Sort ascending: 0 (never), then old timestamps, then new timestamps.
+
                 asort($candidateTimes);
                 $selectedStaff = array_key_first($candidateTimes);
             }
