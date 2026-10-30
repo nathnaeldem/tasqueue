@@ -1,16 +1,26 @@
 <?php
 require 'db.php';
+require 'auth_helpers.php';
 
 header("Content-Type: application/json");
 
 $method = $_SERVER['REQUEST_METHOD'];
-$data = json_decode(file_get_contents("php://input"), true);
+$data = get_request_data();
 $action = $_GET['action'] ?? '';
+$actor = require_current_user($pdo);
 
 if ($method === 'GET') {
     $taskId = $_GET['task_id'] ?? 0;
+    $taskStmt = $pdo->prepare("SELECT department_id FROM tasks WHERE id = ?");
+    $taskStmt->execute([$taskId]);
+    $taskDepartmentId = $taskStmt->fetchColumn();
+
+    if (!$taskDepartmentId) {
+        json_error('Task not found', 404);
+    }
+
+    ensure_department_access($actor, $taskDepartmentId);
     
-    // Get comments for a task
     $sql = "SELECT c.*, u.name as user_name, u.role as user_role 
             FROM comments c 
             JOIN users u ON c.user_id = u.id 
@@ -23,14 +33,22 @@ if ($method === 'GET') {
     echo json_encode(['success' => true, 'comments' => $comments]);
 
 } elseif ($method === 'POST') {
-    // Add a new comment (supports FormData for file upload)
     $taskId = $_POST['task_id'] ?? ($data['task_id'] ?? 0);
-    $userId = $_POST['user_id'] ?? ($data['user_id'] ?? 0);
+    $userId = (int)$actor['id'];
     $message = $_POST['message'] ?? ($data['message'] ?? '');
+
+    $taskStmt = $pdo->prepare("SELECT department_id FROM tasks WHERE id = ?");
+    $taskStmt->execute([$taskId]);
+    $taskDepartmentId = $taskStmt->fetchColumn();
+
+    if (!$taskDepartmentId) {
+        json_error('Task not found', 404);
+    }
+
+    ensure_department_access($actor, $taskDepartmentId);
     
     $attachmentPath = null;
-    
-    // Handle file upload if present
+
     if (isset($_FILES['attachment']) && $_FILES['attachment']['error'] == UPLOAD_ERR_OK) {
         $uploadDir = 'uploads/comments/';
         if (!is_dir($uploadDir)) {
@@ -48,19 +66,15 @@ if ($method === 'GET') {
     $stmt->execute([$taskId, $userId, $message, $attachmentPath]);
     
     $commentId = $pdo->lastInsertId();
-    
-    // Return the new comment with user info
+
     $stmt = $pdo->prepare("SELECT c.*, u.name as user_name, u.role as user_role FROM comments c JOIN users u ON c.user_id = u.id WHERE c.id = ?");
     $stmt->execute([$commentId]);
     $newComment = $stmt->fetch();
-    
-    // TELEGRAM NOTIFICATION for new comment
-    // Get task info and assigned staff's telegram
+
     $taskStmt = $pdo->prepare("SELECT t.*, u.telegram_chat_id, u.name as staff_name, u.id as staff_id FROM tasks t JOIN users u ON t.assigned_to = u.id WHERE t.id = ?");
     $taskStmt->execute([$taskId]);
     $taskInfo = $taskStmt->fetch();
-    
-    // Notify the assigned staff if the commenter is NOT the staff (i.e., admin commented)
+
     if ($taskInfo && $taskInfo['staff_id'] != $userId && !empty($taskInfo['telegram_chat_id'])) {
         $commenterName = $newComment['user_name'];
         $msgPreview = strlen($message) > 50 ? substr($message, 0, 50) . '...' : $message;

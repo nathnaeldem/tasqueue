@@ -17,7 +17,7 @@ const ProtectedRoute = ({ children }) => {
 
 const DashboardRedirect = () => {
   const { user } = useAuth();
-  if (user?.role === 'manager') return <AdminDashboard />;
+  if (user?.is_admin) return <AdminDashboard />;
   return <StaffDashboard />;
 };
 

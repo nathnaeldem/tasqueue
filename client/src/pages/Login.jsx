@@ -27,8 +27,8 @@ const Login = () => {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-[#f3f2f1]">
-            <div className="w-full max-w-[400px] bg-white p-10 shadow-lg select-none">
+        <div className="min-h-screen flex items-center justify-center bg-[#f3f2f1] p-4">
+            <div className="w-full max-w-[400px] bg-white p-6 sm:p-10 shadow-lg select-none">
 
                 <div className="mb-6">
                     <h1 className="text-2xl font-semibold mb-1 text-[#323130]">Sign in</h1>
@@ -63,7 +63,7 @@ const Login = () => {
                     <div className="pt-4 flex justify-end">
                         <button
                             type="submit"
-                            className="ms-btn px-8 py-1.5"
+                            className="ms-btn px-8 py-1.5 w-full sm:w-auto"
                             disabled={loading}
                         >
                             Sign in

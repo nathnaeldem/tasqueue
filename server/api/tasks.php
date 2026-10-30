@@ -1,55 +1,108 @@
 <?php
 require 'db.php';
+require 'auth_helpers.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
-$data = json_decode(file_get_contents("php://input"), true);
+$data = get_request_data();
+$actor = require_current_user($pdo);
 
 if ($method === 'GET') {
-    $role = $_GET['role'] ?? 'staff';
-    $userId = $_GET['user_id'] ?? 0;
+    if ($actor['is_admin']) {
+        $departmentId = resolve_department_scope($actor, false);
 
-    if ($role === 'manager') {
-        // Manager sees all tasks with assignee info
-        $sql = "SELECT t.*, u.name as assignee_name FROM tasks t LEFT JOIN users u ON t.assigned_to = u.id ORDER BY t.created_at DESC";
-        $stmt = $pdo->query($sql);
+        if ($departmentId) {
+            $sql = "SELECT t.*, u.name as assignee_name, d.name as department_name
+                    FROM tasks t
+                    LEFT JOIN users u ON t.assigned_to = u.id
+                    LEFT JOIN departments d ON t.department_id = d.id
+                    WHERE t.department_id = ?
+                    ORDER BY t.created_at DESC";
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute([$departmentId]);
+        } else {
+            $sql = "SELECT t.*, u.name as assignee_name, d.name as department_name
+                    FROM tasks t
+                    LEFT JOIN users u ON t.assigned_to = u.id
+                    LEFT JOIN departments d ON t.department_id = d.id
+                    ORDER BY d.name ASC, t.created_at DESC";
+            $stmt = $pdo->query($sql);
+        }
     } else {
-        // Staff sees their own tasks
-        $sql = "SELECT t.* FROM tasks t WHERE assigned_to = ? ORDER BY created_at DESC";
+        $sql = "SELECT t.*, d.name as department_name
+                FROM tasks t
+                LEFT JOIN departments d ON t.department_id = d.id
+                WHERE t.assigned_to = ?
+                ORDER BY t.created_at DESC";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute([$userId]);
+        $stmt->execute([(int)$actor['id']]);
     }
-    
+
     $tasks = $stmt->fetchAll();
-    
-    // Fetch attachments for each task
-    foreach ($tasks as &$task) {
-        $attStmt = $pdo->prepare("SELECT * FROM attachments WHERE task_id = ?");
-        $attStmt->execute([$task['id']]);
-        $task['attachments'] = $attStmt->fetchAll();
+
+    $attachmentsByTaskId = [];
+    if (!empty($tasks)) {
+        $taskIds = array_map(static fn($task) => (int)$task['id'], $tasks);
+        $placeholders = implode(',', array_fill(0, count($taskIds), '?'));
+        $attStmt = $pdo->prepare("SELECT * FROM attachments WHERE task_id IN ($placeholders) ORDER BY created_at ASC, id ASC");
+        $attStmt->execute($taskIds);
+        foreach ($attStmt->fetchAll() as $attachment) {
+            $taskId = (int)$attachment['task_id'];
+            if (!isset($attachmentsByTaskId[$taskId])) {
+                $attachmentsByTaskId[$taskId] = [];
+            }
+            $attachmentsByTaskId[$taskId][] = $attachment;
+        }
     }
-    
+
+    foreach ($tasks as &$task) {
+        $task['department_id'] = isset($task['department_id']) ? (int)$task['department_id'] : null;
+        $task['assigned_to'] = $task['assigned_to'] !== null ? (int)$task['assigned_to'] : null;
+        $task['created_by'] = $task['created_by'] !== null ? (int)$task['created_by'] : null;
+        $task['attachments'] = $attachmentsByTaskId[(int)$task['id']] ?? [];
+    }
+
     echo json_encode(['success' => true, 'tasks' => $tasks]);
 
 } elseif ($method === 'POST') {
     $action = $_GET['action'] ?? 'create';
 
     if ($action === 'create') {
-        // Support both FormData (for file uploads) and JSON
+        ensure_admin($actor);
+
         $taskType = $_POST['task_type'] ?? ($data['task_type'] ?? '');
         $woreda = $_POST['woreda'] ?? ($data['woreda'] ?? null);
+        $floor = $_POST['floor'] ?? ($data['floor'] ?? null);
+        $coordinateX = $_POST['coordinate_x'] ?? ($data['coordinate_x'] ?? null);
+        $coordinateY = $_POST['coordinate_y'] ?? ($data['coordinate_y'] ?? null);
         $desc = $_POST['description'] ?? ($data['description'] ?? '');
-        $createdBy = $_POST['created_by'] ?? ($data['created_by'] ?? 1);
+        $departmentId = $actor['is_super_admin']
+            ? (int)($_POST['department_id'] ?? ($data['department_id'] ?? 0))
+            : (int)$actor['department_id'];
+        $createdBy = (int)$actor['id'];
+
+        $floor = ($floor === '' || $floor === null) ? null : (int)$floor;
+        $coordinateX = ($coordinateX === '' || $coordinateX === null) ? null : (float)$coordinateX;
+        $coordinateY = ($coordinateY === '' || $coordinateY === null) ? null : (float)$coordinateY;
 
         if (!$taskType || !$desc) {
             echo json_encode(['success' => false, 'error' => 'Task type and description required']);
             exit;
         }
 
-        $stmt = $pdo->prepare("INSERT INTO tasks (task_type, woreda, description, created_by, status) VALUES (?, ?, ?, ?, 'draft')");
-        $stmt->execute([$taskType, $woreda, $desc, $createdBy]);
+        if (!$departmentId || !department_exists($pdo, $departmentId)) {
+            json_error('Valid department is required');
+        }
+
+        $taskTypeStmt = $pdo->prepare("SELECT id FROM task_types WHERE name = ? AND department_id = ?");
+        $taskTypeStmt->execute([$taskType, $departmentId]);
+        if (!$taskTypeStmt->fetchColumn()) {
+            json_error('Task type is not available for the selected department');
+        }
+
+        $stmt = $pdo->prepare("INSERT INTO tasks (task_type, department_id, woreda, `floor`, coordinate_x, coordinate_y, description, created_by, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft')");
+        $stmt->execute([$taskType, $departmentId, $woreda, $floor, $coordinateX, $coordinateY, $desc, $createdBy]);
         $taskId = $pdo->lastInsertId();
 
-        // Handle attachment if present
         if (isset($_FILES['attachment']) && $_FILES['attachment']['error'] == UPLOAD_ERR_OK) {
             $uploadDir = 'uploads/';
             if (!is_dir($uploadDir)) {
@@ -67,24 +120,51 @@ if ($method === 'GET') {
         echo json_encode(['success' => true, 'task_id' => $taskId]);
     
     } elseif ($action === 'assign') {
-        $taskId = $data['task_id'] ?? 0;
-        $targetUserId = $data['target_user_id'] ?? null;
-        $taskStmt = $pdo->prepare("SELECT task_type FROM tasks WHERE id = ?");
-        $taskStmt->execute([$taskId]);
-        $taskType = $taskStmt->fetchColumn();
+        ensure_admin($actor);
 
-        if (!$taskId || !$taskType) {
+        $taskId = (int)($data['task_id'] ?? 0);
+        $targetUserId = $data['target_user_id'] ?? null;
+        $taskStmt = $pdo->prepare("SELECT task_type, department_id FROM tasks WHERE id = ?");
+        $taskStmt->execute([$taskId]);
+        $task = $taskStmt->fetch();
+
+        if (!$taskId || !$task) {
             echo json_encode(['success' => false, 'error' => 'Task not found']);
             exit;
         }
 
+        ensure_department_access($actor, $task['department_id']);
+
         $selectedStaff = null;
 
         if ($targetUserId) {
-            $selectedStaff = $targetUserId;
+            $staffUser = get_user_by_id($pdo, $targetUserId);
+            if (!$staffUser) {
+                json_error('Selected user not found', 404);
+            }
+
+            if ($staffUser['is_admin'] || $staffUser['is_super_admin']) {
+                json_error('Tasks can only be assigned to staff users');
+            }
+
+            if ((int)$staffUser['department_id'] !== (int)$task['department_id']) {
+                json_error('Selected user does not belong to the task department');
+            }
+
+            $selectedStaff = (int)$staffUser['id'];
         } else {
-            $staffUsers = $pdo->query("SELECT id FROM users WHERE role='staff'")->fetchAll(PDO::FETCH_COLUMN);
-            
+            $staffStmt = $pdo->prepare(
+                "SELECT u.id
+                 FROM users u
+                 LEFT JOIN roles r ON u.role = r.name
+                 WHERE u.department_id = ?
+                   AND u.is_super_admin = 0
+                   AND u.frozen = 0
+                   AND (r.is_admin = 0 OR r.is_admin IS NULL)"
+            );
+            $staffStmt->execute([(int)$task['department_id']]);
+            $staffUsers = $staffStmt->fetchAll(PDO::FETCH_COLUMN);
+
             if (empty($staffUsers)) {
                  echo json_encode(['success' => false, 'error' => 'No staff available']);
                  exit;
@@ -92,9 +172,9 @@ if ($method === 'GET') {
 
             $counts = [];
             foreach($staffUsers as $uid) {
-                $stmt = $pdo->prepare("SELECT COUNT(*) FROM tasks WHERE assigned_to = ? AND task_type = ?");
-                $stmt->execute([$uid, $taskType]);
-                $counts[$uid] = $stmt->fetchColumn();
+                $stmt = $pdo->prepare("SELECT COUNT(*) FROM tasks WHERE assigned_to = ? AND task_type = ? AND department_id = ?");
+                $stmt->execute([$uid, $task['task_type'], $task['department_id']]);
+                $counts[$uid] = (int)$stmt->fetchColumn();
             }
 
             $minCount = min($counts);
@@ -105,8 +185,8 @@ if ($method === 'GET') {
             } else {
                 $candidateTimes = [];
                 foreach($candidates as $uid) {
-                    $stmt = $pdo->prepare("SELECT MAX(assigned_at) FROM tasks WHERE assigned_to = ? AND task_type = ?");
-                    $stmt->execute([$uid, $taskType]);
+                    $stmt = $pdo->prepare("SELECT MAX(assigned_at) FROM tasks WHERE assigned_to = ? AND task_type = ? AND department_id = ?");
+                    $stmt->execute([$uid, $task['task_type'], $task['department_id']]);
                     $latest = $stmt->fetchColumn();
                     $candidateTimes[$uid] = $latest ? strtotime($latest) : 0;
                 }
@@ -116,12 +196,9 @@ if ($method === 'GET') {
             }
         }
 
-        // Assign
-        $now = date('Y-m-d H:i:s');
-        $stmt = $pdo->prepare("UPDATE tasks SET assigned_to = ?, status = 'pending', assigned_at = ? WHERE id = ?");
-        $stmt->execute([$selectedStaff, $now, $taskId]);
+        $stmt = $pdo->prepare("UPDATE tasks SET assigned_to = ?, status = 'pending', assigned_at = NOW(), accepted_at = NULL, completed_at = NULL WHERE id = ? AND department_id = ?");
+        $stmt->execute([$selectedStaff, $taskId, $task['department_id']]);
 
-        // TELEGRAM NOTIFICATION
         $stmtUser = $pdo->prepare("SELECT telegram_chat_id, name FROM users WHERE id = ?");
         $stmtUser->execute([$selectedStaff]);
         $user = $stmtUser->fetch();
@@ -129,7 +206,6 @@ if ($method === 'GET') {
         if ($user && !empty($user['telegram_chat_id'])) {
             $msg = "🆕 New Task Assigned!\n\nHello {$user['name']},\nYou have been assigned a new task. Please log in to the portal to accept it.";
             
-            // Send via Bot API
             $botToken = '8288585533:AAENfZ1Qo2sCtZGq_WjcRLnqRVU1DjAopPg'; 
             $chatId = $user['telegram_chat_id'];
             $url = "https://api.telegram.org/bot{$botToken}/sendMessage";
@@ -148,10 +224,23 @@ if ($method === 'GET') {
         echo json_encode(['success' => true, 'assigned_to' => $selectedStaff]);
 
     } elseif ($action === 'update_status') {
-        // Support both FormData and JSON
-        $taskId = $_POST['task_id'] ?? ($data['task_id'] ?? 0);
+        $taskId = (int)($_POST['task_id'] ?? ($data['task_id'] ?? 0));
         $status = $_POST['status'] ?? ($data['status'] ?? '');
-        $userId = $_POST['user_id'] ?? ($data['user_id'] ?? 0);
+        $userId = (int)$actor['id'];
+
+        $taskStmt = $pdo->prepare("SELECT id, department_id, assigned_to FROM tasks WHERE id = ?");
+        $taskStmt->execute([$taskId]);
+        $task = $taskStmt->fetch();
+
+        if (!$task) {
+            json_error('Task not found', 404);
+        }
+
+        ensure_department_access($actor, $task['department_id']);
+
+        if (!$actor['is_admin'] && (int)$task['assigned_to'] !== $userId) {
+            json_error('You can only update tasks assigned to you', 403);
+        }
 
         $sql = "UPDATE tasks SET status = ?";
         $params = [$status];
@@ -162,13 +251,13 @@ if ($method === 'GET') {
             $sql .= ", completed_at = NOW()";
         }
         
-        $sql .= " WHERE id = ?";
+        $sql .= " WHERE id = ? AND department_id = ?";
         $params[] = $taskId;
+        $params[] = $task['department_id'];
 
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         
-        // Handle evidence file upload if completing with attachment
         if ($status === 'completed' && isset($_FILES['evidence']) && $_FILES['evidence']['error'] == UPLOAD_ERR_OK) {
             $uploadDir = 'uploads/';
             if (!is_dir($uploadDir)) {
@@ -186,26 +275,34 @@ if ($method === 'GET') {
         echo json_encode(['success' => true]);
         
     } elseif ($action === 'delete') {
-        $taskId = $data['task_id'] ?? 0;
+        ensure_admin($actor);
+
+        $taskId = (int)($data['task_id'] ?? 0);
         
         if (!$taskId) {
             echo json_encode(['success' => false, 'error' => 'Task ID required']);
             exit;
         }
+
+        $taskStmt = $pdo->prepare("SELECT department_id FROM tasks WHERE id = ?");
+        $taskStmt->execute([$taskId]);
+        $taskDepartmentId = $taskStmt->fetchColumn();
+
+        if (!$taskDepartmentId) {
+            json_error('Task not found', 404);
+        }
+
+        ensure_department_access($actor, $taskDepartmentId);
         
         try {
-            // Delete related records first due to foreign key constraints
-            // Delete attachments
             $stmt = $pdo->prepare("DELETE FROM attachments WHERE task_id = ?");
             $stmt->execute([$taskId]);
             
-            // Delete comments
             $stmt = $pdo->prepare("DELETE FROM comments WHERE task_id = ?");
             $stmt->execute([$taskId]);
             
-            // Delete the task
-            $stmt = $pdo->prepare("DELETE FROM tasks WHERE id = ?");
-            $stmt->execute([$taskId]);
+            $stmt = $pdo->prepare("DELETE FROM tasks WHERE id = ? AND department_id = ?");
+            $stmt->execute([$taskId, $taskDepartmentId]);
             
             echo json_encode(['success' => true]);
         } catch (PDOException $e) {

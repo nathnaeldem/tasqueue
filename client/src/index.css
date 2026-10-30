@@ -15,9 +15,15 @@
 }
 
 body {
+  margin: 0;
   font-family: 'Segoe UI', sans-serif;
   background-color: var(--ms-bg);
   color: var(--ms-text);
+}
+
+#root {
+  min-height: 100vh;
+  width: 100%;
 }
 
 /* Microsoft Style Card */
@@ -25,13 +31,19 @@ body {
   background: white;
   border-radius: 4px;
   box-shadow: 0 1.6px 3.6px 0 rgba(0, 0, 0, 0.132), 0 0.3px 0.9px 0 rgba(0, 0, 0, 0.108);
-  padding: 20px;
+  padding: 16px;
   border: 1px solid transparent;
   transition: box-shadow 0.2s, border-color 0.2s;
 }
 
 .ms-card:hover {
   box-shadow: 0 6.4px 14.4px 0 rgba(0, 0, 0, 0.132), 0 1.2px 3.6px 0 rgba(0, 0, 0, 0.108);
+}
+
+@media (min-width: 640px) {
+  .ms-card {
+    padding: 20px;
+  }
 }
 
 /* Microsoft Style Button */

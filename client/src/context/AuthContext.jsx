@@ -30,11 +30,10 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
-    const register = async (name, email, password) => {
+    const register = async (name, email, password, extraOptions = {}) => {
         try {
-            const response = await api.post('/api/auth.php?action=register', { name, email, password });
+            const response = await api.post('/api/auth.php?action=register', { name, email, password, ...extraOptions });
             if (response.data.success) {
-                // Auto login after register? Or just return success
                 return { success: true };
             }
             return { success: false, error: response.data.error };

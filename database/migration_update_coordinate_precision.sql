@@ -1,0 +1,3 @@
+ALTER TABLE tasks
+MODIFY COLUMN coordinate_x DECIMAL(18, 8) NULL,
+MODIFY COLUMN coordinate_y DECIMAL(18, 8) NULL;
